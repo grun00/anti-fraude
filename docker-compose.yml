@@ -1,0 +1,43 @@
+# Sobe o transacoes (8081) e o antifraude (8082), cada um no seu container e com o seu banco.
+#
+#   docker compose up -d --build        # sobe tudo em segundo plano
+#   docker compose logs -f antifraude   # acompanha o log de um serviço
+#   docker compose run --rm testes      # roda os testes (mvn test)
+#   docker compose down                 # desliga tudo
+name: anti-fraude
+
+services:
+
+  transacoes:
+    build:
+      context: .
+      args:
+        MODULO: transacoes
+    ports:
+      - "8081:8081"
+    environment:
+      # Deixa abrir o console do H2 de fora do container (http://localhost:8081/h2-console).
+      SPRING_H2_CONSOLE_SETTINGS_WEBALLOWOTHERS: "true"
+
+  antifraude:
+    build:
+      context: .
+      args:
+        MODULO: antifraude
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_H2_CONSOLE_SETTINGS_WEBALLOWOTHERS: "true"
+
+  # Roda os testes sem precisar de Java nem Maven na máquina. Só sobe quando alguém pede.
+  testes:
+    image: maven:3.9.9-eclipse-temurin-21
+    profiles: ["testes"]
+    working_dir: /projeto
+    volumes:
+      - ./:/projeto
+      - maven-cache:/root/.m2
+    command: mvn -B clean test
+
+volumes:
+  maven-cache:
