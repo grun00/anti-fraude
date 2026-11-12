@@ -19,6 +19,14 @@ spring:
   h2:
     console:
       enabled: true   # http://localhost:8081/h2-console (JDBC URL: jdbc:h2:mem:transacoes, usuário sa)
+  # Parte 2: a fila do antifraude. No Docker, o docker-compose.yml troca "localhost" por "rabbitmq".
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    connection-timeout: 2s          # RabbitMQ fora do ar: desiste em 2 s e responde 503
+    publisher-confirm-type: simple  # o PublicadorDeTransacao espera o RabbitMQ confirmar cada mensagem
 
 management:
   endpoints:

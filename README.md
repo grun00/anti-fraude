@@ -30,11 +30,11 @@ Um analista pode revisar uma transação `EM_REVISAO` e trocar o resultado.
 ```
 cliente ── POST /transacoes ──▶ [transacoes] ──grava──▶ H2 "transacoes"
                                      │
-                                     │ publica a transação          (parte 2)
+                                     │ publica TransacaoRecebida
                                      ▼
-                              RabbitMQ: fila
+                     RabbitMQ: analise.ex ──▶ analise.q ──(falhou de vez)──▶ analise.dlq
                                      │
-                                     │ consome, analisa
+                                     │ consome (idempotente), analisa
                                      ▼
 cliente ── GET /analises/{id} ─▶ [antifraude] ──grava──▶ H2 "antifraude"
                                      │
@@ -42,14 +42,19 @@ cliente ── GET /analises/{id} ─▶ [antifraude] ──grava──▶ H2 "a
 ```
 
 - Cada serviço tem **o seu banco** e ninguém lê a tabela do outro ([ADR-001](docs/adr/ADR-001-servicos-e-bancos.md)).
-- A **fila** (RabbitMQ) leva a transação do transacoes para o antifraude. Se a mesma mensagem
-  chegar duas vezes, o antifraude grava uma vez só (parte 2).
+- A **fila** (RabbitMQ) leva a transação do transacoes para o antifraude, com entrega "pelo menos
+  uma vez". Se a mesma mensagem chegar duas vezes, o antifraude grava uma vez só: o id da
+  transação é a chave primária da análise ([ADR-002](docs/adr/ADR-002-fila-entre-os-servicos.md)).
+- Se o RabbitMQ estiver fora do ar, o transacoes responde `503` e não grava a transação.
 - O **cache** (Redis) guarda o resultado da análise (parte 3).
 
 | Serviço | Porta | Endpoints | Banco |
 |---|---|---|---|
 | transacoes | 8081 | `POST /transacoes`, `GET /transacoes/{id}` | H2 `transacoes` (tabela `transacao`) |
-| antifraude | 8082 | `GET /analises/{transacaoId}` | H2 `antifraude` (tabela `analise`) |
+| antifraude | 8082 | `GET /analises/{transacaoId}` | H2 `antifraude` (tabelas `analise` e `lista_negra`) |
+| RabbitMQ | 5672, painel 15672 | http://localhost:15672 (guest / guest) | |
+
+Contas na lista negra (carregadas pelo `antifraude/src/main/resources/data.sql`): `6666-666` e `9999-999`.
 
 ## Como rodar
 
@@ -70,16 +75,52 @@ docker compose logs | grep Started    # deve aparecer TransacoesApplication e An
 ### Mandar uma transação
 
 ```bash
-curl -s -X POST localhost:8081/transacoes -H "Content-Type: application/json" \
-  -d '{"conta_origem":"0001-123","conta_destino":"0002-456","valor":150.00,"data_hora":"2026-11-12T14:30:00"}'
+ID=$(curl -s -X POST localhost:8081/transacoes -H "Content-Type: application/json" \
+  -d '{"conta_origem":"0001-123","conta_destino":"0002-456","valor":8000,"data_hora":"2026-11-12T03:10:00"}' \
+  | grep -o '"transacao_id":"[^"]*"' | cut -d'"' -f4)
+echo $ID
 ```
 
-A resposta é `202` com o `transacao_id`. Para consultar:
+A resposta é `202` com o `transacao_id`, guardado na variável `ID`. Para consultar:
 
 ```bash
-curl -s localhost:8081/transacoes/<transacao_id>   # a transação, no transacoes
-curl -s localhost:8082/analises/<transacao_id>     # o resultado, no antifraude (404 até a parte 2)
+curl -s localhost:8081/transacoes/$ID   # a transação, no transacoes
+curl -s localhost:8082/analises/$ID     # o resultado, no antifraude
 ```
+
+Esta transação é de R$ 8.000 às 3h10: `score` 70, `REPROVADA`. O log mostra o caminho:
+
+```bash
+docker compose logs transacoes antifraude | grep -E "Recebi|Analisei|repetida"
+```
+
+### Mandar a mesma mensagem duas vezes
+
+No painel do RabbitMQ (http://localhost:15672, guest / guest): **Exchanges** → `analise.ex` →
+**Publish message**. Preencha:
+
+- **Routing key:** `analise`
+- **Properties:** `content_type` = `application/json`
+- **Payload** (troque o id pelo `echo $ID`):
+  ```json
+  {"transacao_id":"<ID>","conta_origem":"0001-123","conta_destino":"0002-456","valor":8000,"data_hora":"2026-11-12T03:10:00"}
+  ```
+
+Clique em **Publish message** duas vezes. O log do antifraude mostra *"mensagem repetida, nada a
+fazer"*, e no console do H2 do antifraude `SELECT * FROM ANALISE WHERE TRANSACAO_ID = '<ID>'`
+continua com uma linha só.
+
+Pelo terminal, o mesmo:
+
+```bash
+curl -s -u guest:guest -X POST localhost:15672/api/exchanges/%2F/analise.ex/publish \
+  -H "Content-Type: application/json" \
+  -d '{"properties":{"content_type":"application/json"},"routing_key":"analise","payload_encoding":"string",
+       "payload":"{\"transacao_id\":\"'$ID'\",\"conta_origem\":\"0001-123\",\"conta_destino\":\"0002-456\",\"valor\":8000,\"data_hora\":\"2026-11-12T03:10:00\"}"}'
+```
+
+Uma mensagem incompleta (sem `valor`, por exemplo) vai para a fila `analise.dlq`, que aparece em
+**Queues** no painel.
 
 ### Olhar os bancos
 
@@ -100,3 +141,4 @@ docker compose down              # desliga tudo
 ## Decisões (ADRs)
 
 - [ADR-001: dois serviços, cada um com o seu banco](docs/adr/ADR-001-servicos-e-bancos.md)
+- [ADR-002: fila (RabbitMQ) entre os serviços, com consumidor idempotente](docs/adr/ADR-002-fila-entre-os-servicos.md)

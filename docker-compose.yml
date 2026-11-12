@@ -1,4 +1,5 @@
-# Sobe o transacoes (8081) e o antifraude (8082), cada um no seu container e com o seu banco.
+# Sobe o RabbitMQ, o transacoes (8081) e o antifraude (8082), cada serviço no seu container
+# e com o seu banco.
 #
 #   docker compose up -d --build        # sobe tudo em segundo plano
 #   docker compose logs -f antifraude   # acompanha o log de um serviço
@@ -8,6 +9,19 @@ name: anti-fraude
 
 services:
 
+  # A fila entre os dois serviços. Painel: http://localhost:15672 (usuário guest, senha guest).
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
   transacoes:
     build:
       context: .
@@ -15,7 +29,12 @@ services:
         MODULO: transacoes
     ports:
       - "8081:8081"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
+      # Dentro do Docker, cada serviço acha o outro pelo nome, e não por "localhost".
+      SPRING_RABBITMQ_HOST: rabbitmq
       # Deixa abrir o console do H2 de fora do container (http://localhost:8081/h2-console).
       SPRING_H2_CONSOLE_SETTINGS_WEBALLOWOTHERS: "true"
 
@@ -26,7 +45,11 @@ services:
         MODULO: antifraude
     ports:
       - "8082:8082"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_H2_CONSOLE_SETTINGS_WEBALLOWOTHERS: "true"
 
   # Roda os testes sem precisar de Java nem Maven na máquina. Só sobe quando alguém pede.

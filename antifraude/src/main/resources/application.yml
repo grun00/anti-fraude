@@ -16,9 +16,30 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+    defer-datasource-initialization: true   # roda o data.sql (a lista negra) depois de criar as tabelas
   h2:
     console:
       enabled: true   # http://localhost:8082/h2-console (JDBC URL: jdbc:h2:mem:antifraude, usuário sa)
+  # Parte 2: a fila de análise. No Docker, o docker-compose.yml troca "localhost" por "rabbitmq".
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    listener:
+      simple:
+        acknowledge-mode: auto          # ack quando o ConsumidorDeAnalise termina sem erro
+        default-requeue-rejected: false # falhou de vez: vai para a DLQ, em vez de voltar à fila para sempre
+        retry:
+          enabled: true
+          max-attempts: 3               # a primeira tentativa e mais duas...
+          initial-interval: 1s          # ...esperando 1 s...
+          multiplier: 2                 # ...e depois 2 s
+
+# Cada erro do consumidor já aparece numa linha só no log. Sem isto, vem o stack trace inteiro a cada entrega.
+logging:
+  level:
+    org.springframework.amqp.rabbit.listener.ConditionalRejectingErrorHandler: error
 
 management:
   endpoints:

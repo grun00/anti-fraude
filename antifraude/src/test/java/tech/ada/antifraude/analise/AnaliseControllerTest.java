@@ -13,7 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.rabbitmq.listener.simple.auto-startup=false")
 @AutoConfigureMockMvc
 class AnaliseControllerTest {
 
@@ -26,8 +26,8 @@ class AnaliseControllerTest {
     @Test
     void devolveAanaliseGravada() throws Exception {
         UUID id = UUID.randomUUID();
-        repositorio.save(new AnaliseEntity(id, 70, Resultado.REPROVADA, "valor alto; conta na lista negra",
-                LocalDateTime.now()));
+        repositorio.save(new AnaliseEntity(id, "0001-123", LocalDateTime.now(), 70, Resultado.REPROVADA,
+                "valor acima de R$ 5.000; de madrugada", LocalDateTime.now()));
 
         mvc.perform(get("/analises/{id}", id))
                 .andExpect(status().isOk())

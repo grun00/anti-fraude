@@ -11,7 +11,6 @@ import java.util.UUID;
 /**
  * A consulta do resultado da análise. 404 enquanto a transação ainda não foi analisada.
  *
- * TODO (parte 2): escutar a fila e gravar a análise.
  * TODO (parte 3): pôr o cache na leitura.
  */
 @RestController
