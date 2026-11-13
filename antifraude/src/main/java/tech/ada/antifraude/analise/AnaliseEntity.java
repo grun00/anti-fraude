@@ -50,6 +50,11 @@ public class AnaliseEntity implements Persistable<UUID> {
     @Column(nullable = false)
     private LocalDateTime analisadaEm;
 
+    /** Preenchidos quando um analista revisa uma análise EM_REVISAO. */
+    private String revisadaPor;
+
+    private LocalDateTime revisadaEm;
+
     @Transient
     private boolean nova = true;
 
@@ -78,6 +83,20 @@ public class AnaliseEntity implements Persistable<UUID> {
     @PostPersist
     void jaEstaNoBanco() { nova = false; }
 
+    /** O analista troca o resultado de uma análise EM_REVISAO por APROVADA ou REPROVADA. */
+    public void revisar(Resultado novoResultado, String analista, LocalDateTime quando) {
+        if (resultado != Resultado.EM_REVISAO) {
+            throw new RevisaoNaoPermitidaException("a análise " + transacaoId + " está " + resultado
+                    + ": só uma análise EM_REVISAO pode ser revisada");
+        }
+        if (novoResultado == Resultado.EM_REVISAO) {
+            throw new RevisaoNaoPermitidaException("a revisão precisa decidir: APROVADA ou REPROVADA");
+        }
+        this.resultado = novoResultado;
+        this.revisadaPor = analista;
+        this.revisadaEm = quando;
+    }
+
     public UUID getTransacaoId() { return transacaoId; }
     public String getContaOrigem() { return contaOrigem; }
     public LocalDateTime getDataHora() { return dataHora; }
@@ -85,4 +104,6 @@ public class AnaliseEntity implements Persistable<UUID> {
     public Resultado getResultado() { return resultado; }
     public String getMotivos() { return motivos; }
     public LocalDateTime getAnalisadaEm() { return analisadaEm; }
+    public String getRevisadaPor() { return revisadaPor; }
+    public LocalDateTime getRevisadaEm() { return revisadaEm; }
 }

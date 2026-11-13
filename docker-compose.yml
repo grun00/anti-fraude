@@ -48,9 +48,21 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_DATA_REDIS_HOST: redis
       SPRING_H2_CONSOLE_SETTINGS_WEBALLOWOTHERS: "true"
+      # O TTL do cache. Para ver a chave expirar na demo: ANTIFRAUDE_CACHE_TTL=60s docker compose up -d antifraude
+      ANTIFRAUDE_CACHE_TTL: ${ANTIFRAUDE_CACHE_TTL:-1h}
+
+  # O cache do resultado da análise. Para olhar dentro: docker compose exec redis redis-cli KEYS '*'
+  # Sem "ports": só o antifraude fala com ele, pela rede do Docker.
+  redis:
+    image: redis:7.4-alpine
+    # Não salva nada em disco: é cache. Se o Redis reiniciar, começa vazio e nada se perde.
+    command: ["redis-server", "--save", ""]
 
   # Roda os testes sem precisar de Java nem Maven na máquina. Só sobe quando alguém pede.
   testes:

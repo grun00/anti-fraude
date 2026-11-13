@@ -20,6 +20,15 @@ spring:
   h2:
     console:
       enabled: true   # http://localhost:8082/h2-console (JDBC URL: jdbc:h2:mem:antifraude, usuário sa)
+  # Parte 3: o cache mora no Redis. No Docker, o docker-compose.yml troca "localhost" por "redis".
+  cache:
+    type: redis
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 1s           # Redis sem responder em 1 segundo: desiste e vai ao banco (CacheTolerante)
+      connect-timeout: 1s
   # Parte 2: a fila de análise. No Docker, o docker-compose.yml troca "localhost" por "rabbitmq".
   rabbitmq:
     host: localhost
@@ -35,6 +44,11 @@ spring:
           max-attempts: 3               # a primeira tentativa e mais duas...
           initial-interval: 1s          # ...esperando 1 s...
           multiplier: 2                 # ...e depois 2 s
+
+# Parte 3: por quanto tempo o resultado de uma análise fica no cache (ADR-003).
+antifraude:
+  cache:
+    ttl: 1h
 
 # Cada erro do consumidor já aparece numa linha só no log. Sem isto, vem o stack trace inteiro a cada entrega.
 logging:

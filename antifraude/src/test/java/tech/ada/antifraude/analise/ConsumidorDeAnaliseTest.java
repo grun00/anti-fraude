@@ -15,7 +15,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Chama o consumidor direto, sem RabbitMQ: o que importa aqui é o que ele grava. */
-@SpringBootTest(properties = "spring.rabbitmq.listener.simple.auto-startup=false")
+@SpringBootTest(properties = {
+        "spring.rabbitmq.listener.simple.auto-startup=false",
+        "spring.cache.type=simple"})
 class ConsumidorDeAnaliseTest {
 
     private static final LocalDateTime TARDE = LocalDateTime.of(2026, 11, 12, 14, 30);

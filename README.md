@@ -38,7 +38,7 @@ cliente ── POST /transacoes ──▶ [transacoes] ──grava──▶ H2 "
                                      ▼
 cliente ── GET /analises/{id} ─▶ [antifraude] ──grava──▶ H2 "antifraude"
                                      │
-                                     └── cache-aside ──▶ Redis      (parte 3)
+                                     └── cache-aside ──▶ Redis (TTL 1 h; a revisão apaga a cópia)
 ```
 
 - Cada serviço tem **o seu banco** e ninguém lê a tabela do outro ([ADR-001](docs/adr/ADR-001-servicos-e-bancos.md)).
@@ -46,13 +46,16 @@ cliente ── GET /analises/{id} ─▶ [antifraude] ──grava──▶ H2 "a
   uma vez". Se a mesma mensagem chegar duas vezes, o antifraude grava uma vez só: o id da
   transação é a chave primária da análise ([ADR-002](docs/adr/ADR-002-fila-entre-os-servicos.md)).
 - Se o RabbitMQ estiver fora do ar, o transacoes responde `503` e não grava a transação.
-- O **cache** (Redis) guarda o resultado da análise (parte 3).
+- O **cache** (Redis) guarda o resultado da análise por 1 hora. A revisão do analista apaga a
+  cópia, o "ainda não analisada" (`404`) nunca é guardado, e se o Redis cair a consulta lê
+  direto do banco ([ADR-003](docs/adr/ADR-003-cache-do-resultado.md)).
 
 | Serviço | Porta | Endpoints | Banco |
 |---|---|---|---|
 | transacoes | 8081 | `POST /transacoes`, `GET /transacoes/{id}` | H2 `transacoes` (tabela `transacao`) |
-| antifraude | 8082 | `GET /analises/{transacaoId}` | H2 `antifraude` (tabelas `analise` e `lista_negra`) |
+| antifraude | 8082 | `GET /analises/{transacaoId}`, `PUT /analises/{transacaoId}/revisao` | H2 `antifraude` (tabelas `analise` e `lista_negra`) |
 | RabbitMQ | 5672, painel 15672 | http://localhost:15672 (guest / guest) | |
+| Redis | só pela rede do Docker | `docker compose exec redis redis-cli` | |
 
 Contas na lista negra (carregadas pelo `antifraude/src/main/resources/data.sql`): `6666-666` e `9999-999`.
 
@@ -122,6 +125,46 @@ curl -s -u guest:guest -X POST localhost:15672/api/exchanges/%2F/analise.ex/publ
 Uma mensagem incompleta (sem `valor`, por exemplo) vai para a fila `analise.dlq`, que aparece em
 **Queues** no painel.
 
+### O cache
+
+Uma transação de R$ 6.000 à tarde fica `EM_REVISAO` (score 50). Consulte três vezes e olhe o tempo:
+
+```bash
+REV=$(curl -s -X POST localhost:8081/transacoes -H "Content-Type: application/json" \
+  -d '{"conta_origem":"0004-000","conta_destino":"0002-456","valor":6000,"data_hora":"2026-11-12T15:00:00"}' \
+  | grep -o '"transacao_id":"[^"]*"' | cut -d'"' -f4)
+for i in 1 2 3; do curl -s -o /dev/null -w "%{http_code} em %{time_total}s\n" localhost:8082/analises/$REV; done
+docker compose logs antifraude | grep -E "Pediram|Indo ao banco" | tail -6
+```
+
+Só a primeira consulta vai ao banco (*"Indo ao banco"*, miss); as outras vêm do Redis (hit).
+Dentro do Redis:
+
+```bash
+alias redis-cli='docker compose exec -T redis redis-cli'
+redis-cli KEYS '*'                  # analises::<id>
+redis-cli GET "analises::$REV"      # o resultado, em JSON
+redis-cli TTL "analises::$REV"      # segundos até expirar (começa em 3600)
+```
+
+O `404` não fica no cache: `curl -s -o /dev/null -w "%{http_code}\n" localhost:8082/analises/$(uuidgen)`
+responde `404` e nenhuma chave nova aparece no `KEYS`.
+
+O analista revisa, e a cópia do cache é apagada:
+
+```bash
+curl -s -X PUT localhost:8082/analises/$REV/revisao -H "Content-Type: application/json" \
+  -d '{"resultado":"APROVADA","analista":"ana"}'
+redis-cli EXISTS "analises::$REV"   # 0: a cópia foi apagada
+curl -s localhost:8082/analises/$REV  # APROVADA, lido do banco e guardado de novo
+```
+
+Revisar uma análise que não está `EM_REVISAO` responde `409`.
+
+Com o Redis fora (`docker compose stop redis`), a consulta continua respondendo `200`, mais
+devagar, e o log mostra *"Cache fora do ar"*. Para religar: `docker compose start redis`.
+Para ver a chave expirar sem esperar 1 hora: `ANTIFRAUDE_CACHE_TTL=60s docker compose up -d antifraude`.
+
 ### Olhar os bancos
 
 | Serviço | Console | JDBC URL |
@@ -142,3 +185,4 @@ docker compose down              # desliga tudo
 
 - [ADR-001: dois serviços, cada um com o seu banco](docs/adr/ADR-001-servicos-e-bancos.md)
 - [ADR-002: fila (RabbitMQ) entre os serviços, com consumidor idempotente](docs/adr/ADR-002-fila-entre-os-servicos.md)
+- [ADR-003: cache do resultado da análise no Redis](docs/adr/ADR-003-cache-do-resultado.md)
