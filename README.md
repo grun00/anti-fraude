@@ -62,6 +62,9 @@ Contas na lista negra (carregadas pelo `antifraude/src/main/resources/data.sql`)
 ## Como rodar
 
 Precisa só do Git e do **Docker Desktop aberto**. Não precisa instalar Java nem Maven.
+No Windows, use o **Git Bash**: os comandos abaixo não funcionam no PowerShell.
+
+As portas 8081, 8082, 5672 e 15672 precisam estar livres.
 
 ```bash
 git clone https://github.com/grun00/anti-fraude.git
@@ -84,7 +87,8 @@ ID=$(curl -s -X POST localhost:8081/transacoes -H "Content-Type: application/jso
 echo $ID
 ```
 
-A resposta é `202` com o `transacao_id`, guardado na variável `ID`. Para consultar:
+A resposta é `202` com o `transacao_id`, guardado na variável `ID`. A variável (e o `REV` e o
+atalho `redis-cli`, mais abaixo) vale só no terminal onde foi criada. Para consultar:
 
 ```bash
 curl -s localhost:8081/transacoes/$ID   # a transação, no transacoes
@@ -147,8 +151,12 @@ redis-cli GET "analises::$REV"      # o resultado, em JSON
 redis-cli TTL "analises::$REV"      # segundos até expirar (começa em 3600)
 ```
 
-O `404` não fica no cache: `curl -s -o /dev/null -w "%{http_code}\n" localhost:8082/analises/$(uuidgen)`
-responde `404` e nenhuma chave nova aparece no `KEYS`.
+O `404` não fica no cache:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8082/analises/00000000-0000-0000-0000-000000000000
+redis-cli EXISTS "analises::00000000-0000-0000-0000-000000000000"   # 0: o 404 não foi guardado
+```
 
 O analista revisa, e a cópia do cache é apagada:
 
@@ -174,12 +182,28 @@ Para ver a chave expirar sem esperar 1 hora: `ANTIFRAUDE_CACHE_TTL=60s docker co
 
 Usuário `sa`, senha em branco. Os bancos ficam na memória: reiniciar o serviço apaga o banco dele.
 
+⚠️ Reiniciar o antifraude apaga o banco, mas **não** o Redis: as cópias antigas continuam no
+cache por até 1 hora, mesmo sem a análise no banco (é o cache desatualizado do ADR-003). Para
+começar do zero: `docker compose restart antifraude redis`.
+
 ### Testes e desligar
 
 ```bash
 docker compose run --rm testes   # roda os testes dos dois serviços
 docker compose down              # desliga tudo
 ```
+
+### Se der errado
+
+| O que aparece | O que fazer |
+|---|---|
+| `Cannot connect to the Docker daemon` | O Docker Desktop não está aberto. Abra e espere *Engine running*. |
+| `port is already allocated` | Outro programa usa a porta (8081, 8082, 5672 ou 15672). Feche esse programa, ou desligue o outro projeto com `docker compose down` na pasta dele. |
+| `Empty reply from server` ou `Connection refused` | O serviço ainda está subindo. Espere o `Started` no `docker compose logs` e mande de novo. |
+| `echo $ID` mostra uma linha vazia | O POST não deu certo. Mande de novo sem o `grep` para ver a resposta: `curl -i -X POST localhost:8081/transacoes ...` |
+| `GET /analises/$ID` responde `404` | A análise ainda está na fila: espere um segundo e consulte de novo. Se continuar, olhe `docker compose logs antifraude`. |
+| `redis-cli: command not found` | Falta criar o atalho neste terminal: `alias redis-cli='docker compose exec -T redis redis-cli'`. |
+| `the input device is not a TTY` | Rode com `-T`: `docker compose run --rm -T testes`. |
 
 ## Decisões (ADRs)
 
