@@ -75,7 +75,7 @@ docker compose up -d --build
 A primeira vez demora uns minutos (o Docker baixa as imagens e compila). Para ver se subiu:
 
 ```bash
-docker compose logs | grep Started    # deve aparecer TransacoesApplication e AntifraudeApplication
+docker compose logs transacoes antifraude | grep Started   # deve aparecer TransacoesApplication e AntifraudeApplication
 ```
 
 ### Mandar uma transação
